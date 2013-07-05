@@ -10,7 +10,7 @@ SortedCollection.prototype = {
     self = this;
 
     // listen for platform collection add & remove events
-    self.collectionKey.on('add', self._add(), self._errorHandler);
+    self.collectionKey.on('add', self._add, self._errorHandler);
     self.collectionKey.on('remove', self._remove, self._errorHandler);
 
     // Prime our collection data
