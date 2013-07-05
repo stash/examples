@@ -1,6 +1,7 @@
 function SortedCollection (key, sortFunction) {
   this.collectionKey = key;
   this.sortedCollection = [];
+  this.listeners = [];
   this.sortFunction = sortFunction || null;
 }
 
@@ -22,7 +23,9 @@ SortedCollection.prototype = {
           data: data[index]
         };
 
-        set.key.on('set', function(value) {
+        set.key.on('set', function(value, context) {
+          // new val then old val
+          self.fireEvents('change', [value, set.data, context]);
           this.data = value;
         });
 
@@ -67,8 +70,19 @@ SortedCollection.prototype = {
 
   get: function() {
     return _.pluck(this.sortedCollection, 'data');
-  }
+  },
 
+  on: function(event, cb) {
+    this.listeners.push({event: event, cb: cb});
+  },
+
+  fireEvents: function(event, args) {
+    var events = _.where(this.listeners, {event: event});
+
+    _.forEach(events, function(event) {
+      event.cb(null, args);
+    });
+  }
 }
 
 
@@ -87,7 +101,12 @@ function onLoad() {
 
     sortedCollection.init(function(collection) {
       console.log(collection.get());
-      //collection.sortedCollection[5].key.set('Numero Seven');
+
+      collection.on('change', function() {
+        console.log(arguments);
+      })
+
+      collection.sortedCollection[5].key.set('Numero Two');
     });
 
     /*
