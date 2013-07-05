@@ -6,88 +6,36 @@ function SortedCollection (key, sortFunction) {
 }
 
 SortedCollection.prototype = {
-
   init: function(cb) {
-
     self = this;
 
+    // listen for platform collection add & remove events
+    self.collectionKey.on('add', self._add(), self._errorHandler);
+    self.collectionKey.on('remove', self._remove, self._errorHandler);
+
+    // Prime our collection data
+    // collection.get returns two arrays: data & keys
     self.collectionKey.get(function(err, data, keys) {
 
-      if (err) {
-        cb(err);
-        return;
-      }
+      self._errorHandler(cb)(err);
 
-      self.collectionKey.on('remove', function(err, value, context) {
-        self.sortedCollection = [];
-
-        // fire add listeners on this object
-        self.fireEvents('remove', [null, value, context]); // err, new val, array, context
+      // add the data to our collection
+      keys.forEach(function(key, index) {
+        // we don't want to trigger events on local changes
+        // or sort inside our loop
+        self._add({silence: true, sort: false})(key, data[index]);
       });
 
-      // create a collection add listener
-      self.collectionKey.on('add', function(key, value, context) {
-
-        var stamp = key.name.split('/');
-
-        var set = {
-          stamp: stamp[stamp.length - 1],
-          key: key,
-          data: value
-        };
-
-        set.key.on('set', function(value, context) {
-          // new val then old val
-          self.fireEvents('change', [null, value, set.data, self.get(), context]);
-          this.data = value;
-        });
-
-        set.key.on('update', function(value) {
-          self.fireEvents('change', [null. value, set.data, self.get(), context]);
-          this.data = value;
-        });
-
-        self.sortedCollection.push(set);
-
-        self.sort();
-
-        // fire add listeners on this object
-        self.fireEvents('add', [null, value, self.get(), context]); // err, new val, array, context
-      });
-
-      keys.forEach(function(value, index) {
-
-        var stamp = value.name.split('/');
-
-        var set = {
-          stamp: stamp[stamp.length - 1],
-          key: value,
-          data: data[index]
-        };
-
-        set.key.on('set', function(value, context) {
-          // new val then old val
-          self.fireEvents('change', [null, value, set.data, self.get(), context]);
-          this.data = value;
-        });
-
-        set.key.on('update', function(value) {
-          self.fireEvents('change', [null. value, set.data, self.get(), context]);
-          this.data = value;
-        });
-
-        self.sortedCollection.push(set);
-
-      });
-
+      // ok now we can sort our collection
       self.sort();
 
       cb(null, self);
-
     });
   },
-
   sort: function() {
+
+    // we default to sorting by time stamp, but will accept a custom
+    // sort function too
     if (this.sortFunction) {
       this.sortedCollection.sort(this.sortFunction);
     } else {
@@ -98,66 +46,87 @@ SortedCollection.prototype = {
       });
     }
   },
-
   add: function(value, cb) {
 
-    var self = this;
     var timestamp = new Date().getTime();
 
-    this.collectionKey.add(timestamp, value, function(err, key) {
-
-      if (err) {
-        cb(err);
-        return;
-      }
-
-      var stamp = key.name.split('/');
-
-      var set = {
-        stamp: timestamp,
-        key: key,
-        data: value
-      };
-
-      set.key.on('set', function(value, context) {
-        // new val then old val
-        self.fireEvents('change', [null, value, set.data, self.get(), context]);
-        this.data = value;
-      });
-
-      set.key.on('update', function(value) {
-        self.fireEvents('change', [null. value, set.data, self.get(), context]);
-        this.data = value;
-      });
-
-      self.sortedCollection.push(set);
-
-      self.sort();
-
-      cb.apply([null, key]);
+    // we make our timestamp the id, for easy sorting later
+    this.collectionKey.add(timestamp, value, function(err, key, context) {
+      self._errorHandler(cb)(err);
+      // add the new value to our local collection, silencing the event
+      self._add({silence: true})(key, value, context);
+      cb(null, key, context);
     });
 
   },
-
   remove: function(cb) {
     this.collectionKey.remove(cb);
     this.sortedCollection = [];
   },
-
   get: function() {
+    // this returns our sorted collection
     return _.pluck(this.sortedCollection, 'data');
   },
-
   on: function(event, cb) {
+    // register new listeners
     this.listeners.push({event: event, cb: cb});
   },
-
-  fireEvents: function(event, args) {
+  trigger: function(event, args) {
     var events = _.where(this.listeners, {event: event});
 
     _.forEach(events, function(event) {
       event.cb.apply(null, args);
     });
+  },
+  _add: function(options) {
+
+    // We silence local events
+    var optionDefaults = {silence: false, sort: true};
+    var options = options || {};
+
+    _.defaults(options, optionDefaults);
+
+    return function(key, value, context) {
+
+      // We sort by timestamp by default
+      var stamp = key.name.split('/');
+
+      var set = {
+        stamp: stamp[stamp.length - 1],
+        key: key,
+        data: value
+      };
+
+      // Listen to changes to this key
+      set.key.on('set', updateLocalData);
+      set.key.on('update', updateLocalData);
+
+      // Update our local collection data on a set or update event
+      function updateLocalData(value, context) {
+        var oldValue = set.data;
+        var newValue = set.data = value || null;
+        self.trigger('change', [newValue, oldValue, self.get(), context]);
+      }
+
+      // Add an item to our local collection
+      self.sortedCollection.push(set);
+
+      if (options.sort) self.sort();
+
+      if (!options.silence) {
+        self.trigger('add', [null, value, self.get(), context]);
+      }
+    }
+  },
+  _remove: function(value, context) {
+    //  Clear our local collection when remote is removed
+    self.sortedCollection = [];
+    self.trigger('remove', [null, value, context]);
+  },
+  _errorHandler: function(cb) {
+    return function(err) {
+      if (err) return cb(err);
+    }
   }
 }
 
@@ -176,34 +145,31 @@ function onLoad() {
     var sortedCollection = new SortedCollection(myCollection);
 
     sortedCollection.init(function(err, collection) {
-      console.log('initial collection', collection.get());
 
-      collection.on('change', function(err, newVal, oldVal, entireArray, context) {
-        console.log('on change:', arguments);
+      if (err) {
+        // problem instantiating your collection
+      }
+
+      collection.add('Darth Vader', function(err, key, context) {
+        // returns the collection & platform context
       });
 
-      collection.on('add', function(err, newVal, oldVal, entireArray, context) {
-        console.log('on add: ', arguments);
+      collection.get();
+      // ['Darth Vader']
+
+      collection.on('change', function(newValue, oldValue, entireArray, context) {
+        console.log('on change:', newValue, oldValue);
       });
 
-      collection.on('remove', function(err, contextwindow) {
-        console.log('on remove event', arguments);
+      collection.on('add', function(newValue, oldValue, entireArray, context) {
+        console.log('on add:',  newValue, oldValue);
       });
 
-      /*
-      collection.remove(function(err, value, context) {
-        console.log('remove collection ', arguments);
-      })*/
+      collection.on('remove', function(value, context) {
+        console.log('on remove event');
+      });
 
-      collection.sortedCollection[3].key.set('Numero Two');
     });
 
-    /*
-    sortedCollection.add('Nany Drew', function(err, val, entireArray, context) {
-      console.log(arguments);
-    });*/
-
-
   });
-
 }
