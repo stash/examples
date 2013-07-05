@@ -13,6 +13,41 @@ SortedCollection.prototype = {
 
     self.collectionKey.get(function(err, data, keys) {
 
+      if (err) {
+        cb(err);
+        return;
+      }
+
+      // create a collection add listener
+      self.collectionKey.on('add', function(key, value, context) {
+
+        var stamp = key.name.split('/');
+
+        var set = {
+          stamp: stamp[stamp.length - 1],
+          key: key,
+          data: value
+        };
+
+        set.key.on('set', function(value, context) {
+          // new val then old val
+          self.fireEvents('change', [null, value, set.data, self.get(), context]);
+          this.data = value;
+        });
+
+        set.key.on('update', function(value) {
+          self.fireEvents('change', [null. value, set.data, self.get(), context]);
+          this.data = value;
+        });
+
+        self.sortedCollection.push(set);
+
+        self.sort();
+
+        // fire add listeners on this object
+        self.fireEvents('add', [null, value, self.get(), context]); // err, new val, array, context
+      });
+
       keys.forEach(function(value, index) {
 
         var stamp = value.name.split('/');
@@ -25,15 +60,14 @@ SortedCollection.prototype = {
 
         set.key.on('set', function(value, context) {
           // new val then old val
-          self.fireEvents('change', [value, set.data, context]);
+          self.fireEvents('change', [null, value, set.data, self.get(), context]);
           this.data = value;
         });
 
         set.key.on('update', function(value) {
+          self.fireEvents('change', [null. value, set.data, self.get(), context]);
           this.data = value;
         });
-
-        console.log(set);
 
         self.sortedCollection.push(set);
 
@@ -41,7 +75,7 @@ SortedCollection.prototype = {
 
       self.sort();
 
-      cb(self);
+      cb(null, self);
 
     });
   },
@@ -80,7 +114,7 @@ SortedCollection.prototype = {
     var events = _.where(this.listeners, {event: event});
 
     _.forEach(events, function(event) {
-      event.cb(null, args);
+      event.cb.apply(null, args);
     });
   }
 }
@@ -99,20 +133,29 @@ function onLoad() {
 
     var sortedCollection = new SortedCollection(myCollection);
 
-    sortedCollection.init(function(collection) {
+    sortedCollection.init(function(err, collection) {
       console.log(collection.get());
 
-      collection.on('change', function() {
+      collection.on('change', function(err, newVal, oldVal, entireArray, context) {
         console.log(arguments);
-      })
+      });
+
+      collection.on('add', function(err, newVal, oldVal, entireArray, context) {
+        console.log(arguments);
+      });
+
+      collection.on('remove', function(err, oldVal, entireArray, context) {
+        console.log(arguments);
+      });
 
       collection.sortedCollection[5].key.set('Numero Two');
     });
 
     /*
-    sortedCollection.add('Darth Maul', function(err, key) {
+    sortedCollection.add('Madame Mistress', function(err, val, entireArray, context) {
       console.log(arguments);
-    });*/
+    });
+    */
 
   });
 
